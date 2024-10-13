@@ -1,33 +1,26 @@
 import logging
 import os
-
 from modules.ffmpeg_env import setup_ffmpeg_path
 from modules.repos_static.sys_paths import setup_repos_paths
-
 try:
     setup_repos_paths()
     setup_ffmpeg_path()
-    # NOTE: 因为 logger 都是在模块中初始化，所以这个 config 必须在最前面
     logging.basicConfig(
         level=os.getenv("LOG_LEVEL", "INFO"),
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 except BaseException:
     pass
-
 import argparse
-
 import uvicorn
-
 from modules.api.api_setup import setup_api_args
 from modules.models_setup import setup_model_args
 from modules.utils import env
 from modules.utils.ignore_warn import ignore_useless_warnings
+import pyngrok.ngrok as ngrok
 
 ignore_useless_warnings()
-
 logger = logging.getLogger(__name__)
-
 
 def setup_uvicon_args(parser: argparse.ArgumentParser):
     parser.add_argument("--host", type=str, help="Host to run the server on")
@@ -54,7 +47,10 @@ def setup_uvicon_args(parser: argparse.ArgumentParser):
     parser.add_argument(
         "--ssl_keyfile_password", type=str, help="SSL key file password"
     )
-
+    parser.add_argument(
+        "--use_ngrok", action="store_true", help="Use ngrok for tunneling"
+    )
+    parser.add_argument("--ngrok_token", type=str, help="Ngrok authtoken")
 
 def process_uvicon_args(args):
     host = env.get_and_update_env(args, "host", "0.0.0.0", str)
@@ -73,6 +69,14 @@ def process_uvicon_args(args):
     ssl_keyfile_password = env.get_and_update_env(
         args, "ssl_keyfile_password", None, str
     )
+    use_ngrok = env.get_and_update_env(args, "use_ngrok", False, bool)
+    ngrok_token = env.get_and_update_env(args, "ngrok_token", None, str)
+
+    if use_ngrok:
+        if ngrok_token:
+            ngrok.set_auth_token(ngrok_token)
+        public_url = ngrok.connect(port)
+        logger.info(f"Ngrok tunnel established: {public_url}")
 
     uvicorn.run(
         "modules.api.worker:app",
@@ -90,21 +94,16 @@ def process_uvicon_args(args):
         ssl_keyfile_password=ssl_keyfile_password,
     )
 
-
 if __name__ == "__main__":
     import dotenv
-
     dotenv.load_dotenv(
         dotenv_path=os.getenv("ENV_FILE", ".env.api"),
     )
     parser = argparse.ArgumentParser(
         description="Start the FastAPI server with command line arguments"
     )
-    # NOTE: 主进程中不需要处理 model args / api args，但是要接收这些参数, 具体处理在 worker.py 中
     setup_api_args(parser=parser)
     setup_model_args(parser=parser)
     setup_uvicon_args(parser=parser)
-
     args = parser.parse_args()
-
     process_uvicon_args(args)
